@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Focus Detector</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+      background: #f0f0f0;
+    }
+    .container {
+      position: relative;
+      display: inline-block;
+    }
+    .status {
+      margin-top: 10px;
+      padding: 10px;
+      border-radius: 5px;
+      font-weight: bold;
+    }
+    .status.focused {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .status.unfocused {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+    .status.no-face {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeaa7;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <video id="video" width="640" height="480" autoplay muted></video>
+    <canvas id="overlay" width="640" height="480" style="position:absolute; top:0; left:0;"></canvas>
+  </div>
+  <div id="status" class="status">正在加载...</div>
+  
+  <script src="https://unpkg.com/face-api.js/dist/face-api.min.js"></script>
+  <script>
+    const video = document.getElementById('video');
+    const overlay = document.getElementById('overlay');
+    const statusDiv = document.getElementById('status');
+    const ctx = overlay.getContext('2d');
+
+    let lastAlertTime = 0;
+    const ALERT_COOLDOWN = 3000; // 3秒内不重复提醒
+    let lastFaceTime = Date.now();
+    const ABSENCE_THRESHOLD = 5000; // 5秒
+    const ABSENCE_ALERT = 5 * 60 * 1000; // 5分钟
+    let absenceAlerted = false;
+
+    async function setup() {
+      await faceapi.nets.tinyFaceDetector.loadFromUri('/weights');
+      await faceapi.nets.faceLandmark68TinyNet.loadFromUri('/weights');
+      startVideo();
+    }
+
+    function startVideo() {
+      navigator.mediaDevices.getUserMedia({ video: {} })
+        .then(stream => video.srcObject = stream)
+        .catch(err => console.error(err));
+    }
+
+    function updateStatus(message, className) {
+      statusDiv.textContent = message;
+      statusDiv.className = `status ${className}`;
+    }
+
+    function showAlert(message) {
+      const now = Date.now();
+      if (now - lastAlertTime > ALERT_COOLDOWN) {
+        alert(message);
+        lastAlertTime = now;
+      }
+    }
+
+    video.addEventListener('play', () => {
+      const centerX = overlay.width / 2;
+      const centerY = overlay.height / 2;
+      const options = new faceapi.TinyFaceDetectorOptions({
+        inputSize: 416,
+        scoreThreshold: 0.3
+      });
+      // 绘制中心参考线
+      function drawCenterLines() {
+        ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        
+        // 垂直线
+        ctx.beginPath();
+        ctx.moveTo(centerX, 0);
+        ctx.lineTo(centerX, overlay.height);
+        ctx.stroke();
+        
+        // 水平线
+        ctx.beginPath();
+        ctx.moveTo(0, centerY);
+        ctx.lineTo(overlay.width, centerY);
+        ctx.stroke();
+        
+        ctx.setLineDash([]);
+      }
+
+      setInterval(async () => {
+        const detection = await faceapi
+          .detectSingleFace(video, options)
+          .withFaceLandmarks(true);
+
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+        drawCenterLines();
+
+        if (detection) {
+          const nose = detection.landmarks.getNose()[0];
+          const leftEye = detection.landmarks.getLeftEye()[0];
+          const rightEye = detection.landmarks.getRightEye()[0];
+
+          // 绘制检测框和关键点
+          ctx.strokeStyle = 'green';
+          ctx.lineWidth = 3;
+          ctx.strokeRect(detection.detection.box.x, detection.detection.box.y, 
+                        detection.detection.box.width, detection.detection.box.height);
+
+          // 绘制鼻子点
+          ctx.fillStyle = 'yellow';
+          ctx.beginPath();
+          ctx.arc(nose.x, nose.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 绘制眼睛点
+          ctx.fillStyle = 'blue';
+          ctx.beginPath();
+          ctx.arc(leftEye.x, leftEye.y, 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(rightEye.x, rightEye.y, 3, 0, Math.PI * 2);
+          ctx.fill();
+
+          // 只要检测到人脸就更新时间，并重置弹窗标志
+          lastFaceTime = Date.now();
+          absenceAlerted = false;
+        }
+
+        // 状态显示逻辑：5秒内检测到过人脸就显示正对屏幕
+        if (Date.now() - lastFaceTime <= ABSENCE_THRESHOLD) {
+          updateStatus('🟢 正对屏幕', 'focused');
+        } else {
+          updateStatus('⚠️ 未检测到人脸', 'no-face');
+        }
+
+        // 5分钟未检测到人脸，弹窗一次
+        if (!absenceAlerted && Date.now() - lastFaceTime > ABSENCE_ALERT) {
+          alert('超过5分钟未检测到人脸，请回到屏幕前！');
+          absenceAlerted = true;
+        }
+      }, 1000); // 每1秒检测一次
+    });
+
+    setup();
+  </script>
+</body>
+</html>
