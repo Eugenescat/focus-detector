@@ -4,8 +4,14 @@
   "version": "1.0",
   "description": "专注度检测与历史曲线",
   "permissions": ["storage", "activeTab", "sidePanel", "tabs"],
+  "icons": {
+    "16":  "icon.png"
+  },
   "action": {
     "default_icon": "icon.png"
+  },
+  "background": {
+    "service_worker": "background.js"
   },
   "side_panel": {
     "default_icon": "icon.png",
