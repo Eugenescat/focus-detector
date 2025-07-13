@@ -3,12 +3,23 @@
 <head>
   <meta charset="utf-8">
   <title>Focus Detector</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
   <style>
     body {
       margin: 0;
       padding: 20px;
       font-family: Arial, sans-serif;
       background: #f0f0f0;
+    }
+    .main-layout {
+      display: flex;
+      align-items: flex-start;
+      gap: 32px;
+    }
+    .left-panel {
+      flex: 0 0 auto;
+      min-width: 700px;
     }
     .container {
       position: relative;
@@ -35,14 +46,107 @@
       color: #856404;
       border: 1px solid #ffeaa7;
     }
+    .chart-container {
+      margin-top: 32px;
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 1000px;
+      margin-left: auto;
+      margin-right: auto;
+      display: block;
+    }
+    .stats {
+      display: flex;
+      gap: 20px;
+      margin-top: 20px;
+    }
+    .stat-card {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      text-align: center;
+      min-width: 120px;
+    }
+    .stat-value {
+      font-size: 24px;
+      font-weight: bold;
+      color: #2c3e50;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: #7f8c8d;
+      margin-top: 5px;
+    }
+    .controls {
+      margin-top: 15px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+    .btn-primary {
+      background: #3498db;
+      color: white;
+    }
+    .btn-danger {
+      background: #e74c3c;
+      color: white;
+    }
+    .btn:hover {
+      opacity: 0.8;
+    }
   </style>
 </head>
 <body>
-  <div class="container">
-    <video id="video" width="640" height="480" autoplay muted></video>
-    <canvas id="overlay" width="640" height="480" style="position:absolute; top:0; left:0;"></canvas>
+  <div class="main-layout">
+    <div class="left-panel">
+      <div class="container">
+        <video id="video" width="640" height="480" autoplay muted></video>
+        <canvas id="overlay" width="640" height="480" style="position:absolute; top:0; left:0;"></canvas>
+      </div>
+      <div id="status" class="status">正在加载...</div>
+      <div class="stats">
+        <div class="stat-card">
+          <div class="stat-value" id="focusRate">0%</div>
+          <div class="stat-label">专注率</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="totalTime">0分钟</div>
+          <div class="stat-label">总时长</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="focusTime">0分钟</div>
+          <div class="stat-label">专注时长</div>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="btn btn-primary" onclick="exportData()">导出数据</button>
+        <button class="btn btn-danger" onclick="clearData()">清除数据</button>
+        <label>时间范围: 
+          <select id="timeRange" onchange="updateChart()">
+            <option value="1">最近1小时</option>
+            <option value="6">最近6小时</option>
+            <option value="24" selected>最近24小时</option>
+            <option value="168">最近7天</option>
+          </select>
+        </label>
+      </div>
+    </div>
   </div>
-  <div id="status" class="status">正在加载...</div>
+
+  <div class="chart-container" style="max-width: 1000px; margin: 32px auto 0 auto; width: 100%;">
+    <canvas id="focusChart" width="800" height="300"></canvas>
+  </div>
   
   <script src="https://unpkg.com/face-api.js/dist/face-api.min.js"></script>
   <script>
@@ -57,6 +161,193 @@
     const ABSENCE_THRESHOLD = 5000; // 5秒
     const ABSENCE_ALERT = 5 * 60 * 1000; // 5分钟
     let absenceAlerted = false;
+
+    // 专注数据相关变量
+    let focusData = [];
+    let sessionStartTime = Date.now();
+    let totalFocusTime = 0;
+    let totalSessionTime = 0;
+    let focusChart;
+
+    // 从localStorage加载数据
+    function loadFocusData() {
+      const saved = localStorage.getItem('focusData');
+      if (saved) {
+        focusData = JSON.parse(saved);
+      }
+      const savedStats = localStorage.getItem('focusStats');
+      if (savedStats) {
+        const stats = JSON.parse(savedStats);
+        totalFocusTime = stats.totalFocusTime || 0;
+        totalSessionTime = stats.totalSessionTime || 0;
+      }
+    }
+
+    // 保存数据到localStorage
+    function saveFocusData() {
+      localStorage.setItem('focusData', JSON.stringify(focusData));
+      localStorage.setItem('focusStats', JSON.stringify({
+        totalFocusTime,
+        totalSessionTime
+      }));
+    }
+
+    // 初始化图表
+    function initChart() {
+      const chartCtx = document.getElementById('focusChart').getContext('2d');
+      focusChart = new Chart(chartCtx, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [{
+            label: '专注度',
+            data: [],
+            borderColor: '#2ecc71',
+            backgroundColor: 'rgba(46, 204, 113, 0.1)',
+            borderWidth: 2,
+            fill: true,
+            tension: 0.4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: {
+            duration: 0  // 不要动画
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              max: 100,
+              ticks: {
+                callback: function(value) {
+                  if (value === 0 || value === 100) {
+                    return value + '%';
+                  }
+                  return '';
+                },
+                stepSize: 100,
+                min: 0,
+                max: 100
+              }
+            },
+            x: {
+              type: 'time',
+              time: {
+                unit: 'minute',
+                displayFormats: {
+                  minute: 'HH:mm',
+                  hour: 'HH:mm'
+                }
+              },
+              ticks: {
+                autoSkip: true,
+                maxTicksLimit: 10,
+                callback: function(value) {
+                  const date = new Date(value);
+                  return date.getHours().toString().padStart(2, '0') + ':' +
+                         date.getMinutes().toString().padStart(2, '0');
+                }
+              },
+              title: {
+                display: true,
+                text: '时间'
+              }
+            }
+          },
+          plugins: {
+            title: {
+              display: true,
+              text: '专注度历史曲线'
+            },
+            legend: {
+              display: true
+            }
+          }
+        }
+      });
+    }
+
+    // 更新图表数据
+    function updateChart() {
+      const timeRange = parseInt(document.getElementById('timeRange').value);
+      const now = Date.now();
+      const cutoffTime = now - (timeRange * 60 * 60 * 1000); // 转换为毫秒
+
+      const filteredData = focusData.filter(point => point.timestamp >= cutoffTime);
+      
+      focusChart.data.labels = filteredData.map(point => new Date(point.timestamp));
+      focusChart.data.datasets[0].data = filteredData.map(point => point.focusRate);
+      
+      focusChart.update();
+    }
+
+    // 添加专注数据点
+    function addFocusDataPoint(isFocused) {
+      const now = Date.now();
+      const sessionDuration = (now - sessionStartTime) / 1000; // 秒
+      
+      // 计算当前专注率
+      const focusRate = isFocused ? 100 : 0;
+      
+      // 添加到数据数组
+      focusData.push({
+        timestamp: now,
+        focusRate: focusRate,
+        sessionDuration: sessionDuration
+      });
+
+      // 保持最近24小时的数据
+      const oneDayAgo = now - (24 * 60 * 60 * 1000);
+      focusData = focusData.filter(point => point.timestamp >= oneDayAgo);
+
+      // 更新统计数据
+      if (isFocused) {
+        totalFocusTime += 1; // 每秒专注时间
+      }
+      totalSessionTime += 1;
+
+      // 更新显示
+      updateStats();
+      updateChart();
+      saveFocusData();
+    }
+
+    // 更新统计显示
+    function updateStats() {
+      const focusRate = totalSessionTime > 0 ? Math.round((totalFocusTime / totalSessionTime) * 100) : 0;
+      const totalMinutes = Math.round(totalSessionTime / 60);
+      const focusMinutes = Math.round(totalFocusTime / 60);
+
+      document.getElementById('focusRate').textContent = focusRate + '%';
+      document.getElementById('totalTime').textContent = totalMinutes + '分钟';
+      document.getElementById('focusTime').textContent = focusMinutes + '分钟';
+    }
+
+    // 导出数据
+    function exportData() {
+      const dataStr = JSON.stringify(focusData, null, 2);
+      const dataBlob = new Blob([dataStr], {type: 'application/json'});
+      const url = URL.createObjectURL(dataBlob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'focus-data-' + new Date().toISOString().split('T')[0] + '.json';
+      link.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // 清除数据
+    function clearData() {
+      if (confirm('确定要清除所有专注数据吗？')) {
+        focusData = [];
+        totalFocusTime = 0;
+        totalSessionTime = 0;
+        sessionStartTime = Date.now();
+        updateStats();
+        updateChart();
+        saveFocusData();
+      }
+    }
 
     async function setup() {
       await faceapi.nets.tinyFaceDetector.loadFromUri('/weights');
@@ -90,6 +381,7 @@
         inputSize: 416,
         scoreThreshold: 0.3
       });
+      
       // 绘制中心参考线
       function drawCenterLines() {
         ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
@@ -112,6 +404,7 @@
       }
 
       setInterval(async () => {
+
         const detection = await faceapi
           .detectSingleFace(video, options)
           .withFaceLandmarks(true);
@@ -150,8 +443,14 @@
           absenceAlerted = false;
         }
 
-        // 状态显示逻辑：5秒内检测到过人脸就显示正对屏幕
-        if (Date.now() - lastFaceTime <= ABSENCE_THRESHOLD) {
+        // 检测和lastFaceTime更新后再判定专注状态
+        const isCurrentlyFocused = (Date.now() - lastFaceTime <= ABSENCE_THRESHOLD);
+
+        // 添加专注数据点（保证检测和判定顺序）
+        addFocusDataPoint(isCurrentlyFocused);
+
+        // 状态显示
+        if (isCurrentlyFocused) {
           updateStatus('🟢 正对屏幕', 'focused');
         } else {
           updateStatus('⚠️ 未检测到人脸', 'no-face');
@@ -165,6 +464,22 @@
       }, 1000); // 每1秒检测一次
     });
 
+    // 初始化
+    loadFocusData();
+    // 如果focusData为空，补充一段100的点，保证初始曲线为100
+    if (focusData.length === 0) {
+      const now = Date.now();
+      for (let i = 0; i < 10; i++) { // 10秒
+        focusData.push({
+          timestamp: now - (10 - i) * 1000,
+          focusRate: 100,
+          sessionDuration: i + 1
+        });
+      }
+      saveFocusData();
+    }
+    initChart();
+    updateStats();
     setup();
   </script>
 </body>
