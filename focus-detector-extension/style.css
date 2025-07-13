@@ -29,9 +29,67 @@ body {
   color: #856404;
   border: 1px solid #ffeaa7;
 }
+.status.not-focus-site {
+  background: #e3f2fd;
+  color: #1565c0;
+  border: 1px solid #bbdefb;
+}
+
+/* 实时状态显示样式 */
+.realtime-status {
+  margin: 15px 0;
+  padding: 10px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.status-indicator {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+  padding: 5px 0;
+}
+
+.status-indicator:last-child {
+  margin-bottom: 0;
+}
+
+.status-label {
+  font-size: 13px;
+  font-weight: bold;
+  color: #2c3e50;
+}
+
+.status-value {
+  font-size: 13px;
+  font-weight: bold;
+  padding: 3px 8px;
+  border-radius: 4px;
+  transition: all 0.3s ease;
+}
+
+.status-value.detected {
+  background: #d4edda;
+  color: #155724;
+  border: 1px solid #c3e6cb;
+}
+
+.status-value.not-detected {
+  background: #f8d7da;
+  color: #721c24;
+  border: 1px solid #f5c6cb;
+}
+
+.status-value.detecting {
+  background: #fff3cd;
+  color: #856404;
+  border: 1px solid #ffeaa7;
+}
+
 .chart-container {
-  width: 100%;
-  max-width: 320px;
+  width: 300px;
   margin-left: auto;
   margin-right: auto;
   margin-top: 32px;
@@ -95,4 +153,65 @@ body {
 .focus-sites-setting input {
   width: 200px;
   font-size: 13px;
+}
+
+/* 专注网址显示组件样式 */
+.current-focus-sites {
+  margin-top: 15px;
+  padding: 10px;
+  background: #f8f9fa;
+  border-radius: 6px;
+  border: 1px solid #e9ecef;
+}
+
+.current-focus-sites label {
+  display: block;
+  font-size: 13px;
+  font-weight: bold;
+  color: #495057;
+  margin-bottom: 8px;
+}
+
+.focus-sites-list {
+  min-height: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.focus-site-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #e3f2fd;
+  color: #1565c0;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 13px;
+  border: 1px solid #bbdefb;
+  word-break: break-all;
+  max-width: 400px;
+}
+
+.focus-site-row .site-url {
+  flex: 1;
+  margin-right: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-site-row .remove-site-btn {
+  background: none;
+  border: none;
+  color: #e74c3c;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 0 6px;
+  line-height: 1;
+  border-radius: 50%;
+  transition: background 0.2s;
+}
+.focus-site-row .remove-site-btn:hover {
+  background: #fdecea;
 } 

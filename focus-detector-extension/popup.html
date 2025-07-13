@@ -14,6 +14,19 @@
     <canvas id="overlay" width="640" height="480" style="position:absolute; top:0; left:0;"></canvas>
   </div>
   <div id="status" class="status">正在加载...</div>
+  
+  <!-- 实时状态显示 -->
+  <div class="realtime-status">
+    <div class="status-indicator">
+      <span class="status-label">人脸识别:</span>
+      <span id="faceDetectionStatus" class="status-value">检测中...</span>
+    </div>
+    <div class="status-indicator">
+      <span class="status-label">专注网页:</span>
+      <span id="focusSiteStatus" class="status-value">检测中...</span>
+    </div>
+  </div>
+  
   <div class="stats">
     <div class="stat-card">
       <div class="stat-value" id="focusRate">0%</div>
@@ -29,8 +42,8 @@
     </div>
   </div>
   <div class="controls">
-    <button class="btn btn-primary" onclick="exportData()">导出数据</button>
-    <button class="btn btn-danger" onclick="clearData()">清除数据</button>
+    <button class="btn btn-primary" id="exportDataBtn">导出数据</button>
+    <button class="btn btn-danger" id="clearDataBtn">清除数据</button>
     <label>时间范围: 
       <select id="timeRange" onchange="updateChart()">
         <option value="1">最近1小时</option>
@@ -42,8 +55,16 @@
   </div>
   <div class="focus-sites-setting">
     <label>专注网址（用逗号分隔）:</label>
-    <input id="focusSitesInput" type="text" style="width: 400px;" placeholder="如 https://leetcode.cn/,https://leetcode.com/">
-    <button class="btn btn-primary" onclick="saveFocusSites()">保存网址</button>
+    <input id="focusSitesInput" type="text" style="width: 400px;" placeholder="如 https://leetcode.cn/">
+    <button class="btn btn-primary" id="saveFocusSitesBtn">保存网址</button>
+    
+    <!-- 已添加的专注网址显示 -->
+    <div class="current-focus-sites">
+      <label>当前专注网址:</label>
+      <div id="currentFocusSitesList" class="focus-sites-list">
+        <span class="no-sites">暂无专注网址（浏览专注网址时会自动记录专注时长）</span>
+      </div>
+    </div>
   </div>
   <div class="chart-container">
     <canvas id="focusChart" width="800" height="300"></canvas>

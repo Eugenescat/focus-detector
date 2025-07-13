@@ -1,58 +1,97 @@
-// Chart.js, face-api.js, and chartjs-adapter-date-fns are loaded via <script> in popup.html
-
-const video = document.getElementById('video');
-const overlay = document.getElementById('overlay');
-const statusDiv = document.getElementById('status');
-const ctx = overlay.getContext('2d');
-
-let lastAlertTime = 0;
-const ALERT_COOLDOWN = 3000; // 3秒内不重复提醒
-let lastFaceTime = Date.now();
-const ABSENCE_THRESHOLD = 5000; // 5秒
-const ABSENCE_ALERT = 5 * 60 * 1000; // 5分钟
-let absenceAlerted = false;
-let hasDetectedFace = false;
-
-// 专注数据相关变量
+// 全局变量
+let focusChart;
 let focusData = [];
-let sessionStartTime = Date.now();
 let totalFocusTime = 0;
 let totalSessionTime = 0;
-let focusChart;
+let sessionStartTime = Date.now();
 
-// ========== 专注网址设置 ==========
-// function getFocusSites() {
-//   const sites = localStorage.getItem('focusSites');
-//   if (!sites) return [];
-//   return sites.split(',').map(s => s.trim()).filter(Boolean);
-// }
-// function saveFocusSites() {
-//   const val = document.getElementById('focusSitesInput').value;
-//   localStorage.setItem('focusSites', val);
-//   alert('专注网址已保存！');
-// }
-// window.addEventListener('DOMContentLoaded', () => {
-//   const val = localStorage.getItem('focusSites') || '';
-//   const input = document.getElementById('focusSitesInput');
-//   if (input) input.value = val;
-// });
-// function isOnFocusSite() {
-//   const sites = getFocusSites();
-//   return sites.some(site => window.location.href.startsWith(site));
-// }
+const ALERT_COOLDOWN = 3000;
+const ABSENCE_THRESHOLD = 5000;
+const ABSENCE_ALERT = 5 * 60 * 1000;
+let lastAlertTime = 0;
+let lastFaceTime = Date.now();
+let absenceAlerted = false;
+let hasDetectedFace = false;
+let isFocus = false;
 
-// ========== 数据存取 ==========
+// 人脸检测状态缓冲
+let faceDetectionBuffer = {
+  consecutiveDetections: 0,
+  consecutiveNonDetections: 0,
+  lastStatus: null
+};
+const DETECTION_THRESHOLD = 2; // 连续检测到2次才确认
+const NON_DETECTION_THRESHOLD = 3; // 连续未检测到3次才确认
+
+// ====== 实时状态更新 ======
+function updateFaceDetectionStatus(isDetected) {
+  const statusElement = document.getElementById('faceDetectionStatus');
+  const now = Date.now();
+  
+  // 更新检测缓冲
+  if (isDetected) {
+    faceDetectionBuffer.consecutiveDetections++;
+    faceDetectionBuffer.consecutiveNonDetections = 0;
+  } else {
+    faceDetectionBuffer.consecutiveNonDetections++;
+    faceDetectionBuffer.consecutiveDetections = 0;
+  }
+  
+  // 确定最终状态
+  let finalStatus;
+  if (faceDetectionBuffer.consecutiveDetections >= DETECTION_THRESHOLD) {
+    finalStatus = 'detected';
+  } else if (faceDetectionBuffer.consecutiveNonDetections >= NON_DETECTION_THRESHOLD) {
+    // 只有在5秒内未检测到人脸时才显示"未检测到"
+    if (now - lastFaceTime > 5000) {
+      finalStatus = 'not-detected';
+    } else {
+      finalStatus = 'detecting';
+    }
+  } else {
+    // 缓冲期间保持之前的状态或显示检测中
+    finalStatus = faceDetectionBuffer.lastStatus || 'detecting';
+  }
+  
+  // 更新显示
+  switch (finalStatus) {
+    case 'detected':
+      statusElement.textContent = '✅ 已检测到';
+      statusElement.className = 'status-value detected';
+      break;
+    case 'not-detected':
+      statusElement.textContent = '❌ 未检测到';
+      statusElement.className = 'status-value not-detected';
+      break;
+    case 'detecting':
+    default:
+      statusElement.textContent = '⏳ 检测中...';
+      statusElement.className = 'status-value detecting';
+      break;
+  }
+  
+  // 保存当前状态
+  faceDetectionBuffer.lastStatus = finalStatus;
+}
+
+function updateFocusSiteStatus(isFocus) {
+  const statusElement = document.getElementById('focusSiteStatus');
+  if (isFocus) {
+    statusElement.textContent = '✅ 专注网页';
+    statusElement.className = 'status-value detected';
+  } else {
+    statusElement.textContent = '❌ 非专注网页';
+    statusElement.className = 'status-value not-detected';
+  }
+}
+
+// ====== 数据存取 ======
 function loadFocusData() {
   const saved = localStorage.getItem('focusData');
-  if (saved) {
-    focusData = JSON.parse(saved);
-  }
-  const savedStats = localStorage.getItem('focusStats');
-  if (savedStats) {
-    const stats = JSON.parse(savedStats);
-    totalFocusTime = stats.totalFocusTime || 0;
-    totalSessionTime = stats.totalSessionTime || 0;
-  }
+  if (saved) focusData = JSON.parse(saved);
+  const stats = JSON.parse(localStorage.getItem('focusStats') || '{}');
+  totalFocusTime = stats.totalFocusTime || 0;
+  totalSessionTime = stats.totalSessionTime || 0;
 }
 function saveFocusData() {
   localStorage.setItem('focusData', JSON.stringify(focusData));
@@ -62,7 +101,69 @@ function saveFocusData() {
   }));
 }
 
-// ========== 图表 ==========
+// ====== 专注网址 ======
+function getFocusSites() {
+  const v = localStorage.getItem('focusSites');
+  return v ? v.split(',').map(s=>s.trim()).filter(Boolean) : [];
+}
+function saveFocusSites() {
+  const val = document.getElementById('focusSitesInput').value;
+  const newSites = val.split(',').map(s => s.trim()).filter(Boolean);
+  const oldSites = getFocusSites();
+  // 合并并去重
+  const merged = Array.from(new Set([...oldSites, ...newSites]));
+  localStorage.setItem('focusSites', merged.join(','));
+  document.getElementById('focusSitesInput').value = '';
+  updateFocusSitesDisplay();
+}
+
+function updateFocusSitesDisplay() {
+  const sites = getFocusSites();
+  const container = document.getElementById('currentFocusSitesList');
+  if (!container) return;
+  if (sites.length === 0) {
+    container.innerHTML = '<span class="no-sites">暂无专注网址（浏览专注网址时会自动记录专注时长）</span>';
+  } else {
+    container.innerHTML = sites.map((site, idx) =>
+      `<div class="focus-site-row">
+        <span class="site-url">${site}</span>
+        <button class="remove-site-btn" title="删除" data-idx="${idx}">-</button>
+      </div>`
+    ).join('');
+    // 绑定删除事件
+    Array.from(container.getElementsByClassName('remove-site-btn')).forEach(btn => {
+      btn.onclick = function() {
+        const idx = parseInt(this.getAttribute('data-idx'));
+        const newSites = getFocusSites();
+        newSites.splice(idx, 1);
+        localStorage.setItem('focusSites', newSites.join(','));
+        updateFocusSitesDisplay();
+      };
+    });
+  }
+}
+
+function checkFocusSiteStatus(callback) {
+  chrome.tabs.query({active: true, currentWindow: true}, function(tabs) {
+    const tabUrl = tabs[0].url;
+    const sites = getFocusSites();
+    let isFocus = false;
+    if (sites.length === 0) {
+      isFocus = true;
+    } else {
+      isFocus = sites.some(site => tabUrl.startsWith(site));
+    }
+    updateFocusSiteStatus(isFocus);
+    if (callback) callback(isFocus);
+  });
+}
+// function isOnFocusSite() {
+//   const sites = getFocusSites();
+//   if (sites.length === 0) return true;
+//   return sites.some(site => location.href.startsWith(site));
+// }
+
+// ====== Chart.js 初始化与更新 ======
 function initChart() {
   const chartCtx = document.getElementById('focusChart').getContext('2d');
   focusChart = new Chart(chartCtx, {
@@ -105,18 +206,25 @@ function initChart() {
           type: 'time',
           time: {
             unit: 'minute',
+            stepSize: 10,
             displayFormats: {
               minute: 'HH:mm',
               hour: 'HH:mm'
             }
           },
           ticks: {
-            autoSkip: true,
-            maxTicksLimit: 5,
+            autoSkip: false,
+            source: 'auto',
+            maxTicksLimit: 12,
             callback: function(value) {
               const date = new Date(value);
-              return date.getHours().toString().padStart(2, '0') + ':' +
-                     date.getMinutes().toString().padStart(2, '0');
+              const minutes = date.getMinutes();
+              // 只显示每10分钟的刻度
+              if (minutes % 10 === 0) {
+                return date.getHours().toString().padStart(2, '0') + ':' +
+                       date.getMinutes().toString().padStart(2, '0');
+              }
+              return '';
             }
           },
           title: {
@@ -137,191 +245,155 @@ function initChart() {
     }
   });
 }
+
 function updateChart() {
   if (!focusChart) return;
-  const timeRange = parseInt(document.getElementById('timeRange').value);
-  const now = Date.now();
-  const cutoffTime = now - (timeRange * 60 * 60 * 1000);
-  const filteredData = focusData.filter(point => point.timestamp >= cutoffTime);
-  focusChart.data.labels = filteredData.map(point => new Date(point.timestamp));
-  focusChart.data.datasets[0].data = filteredData.map(point => point.focusRate);
+  const hours = +document.getElementById('timeRange').value;
+  const cutoff = Date.now() - hours*3600*1000;
+  const pts = focusData.filter(p=>p.timestamp>=cutoff);
+  focusChart.data.labels = pts.map(p=>new Date(p.timestamp));
+  focusChart.data.datasets[0].data = pts.map(p=>p.focusRate);
   focusChart.update();
 }
 
-// ========== 统计 ==========
+// ====== 统计面板 ======
 function updateStats() {
-  const focusRate = totalSessionTime > 0 ? Math.round((totalFocusTime / totalSessionTime) * 100) : 0;
-  const totalMinutes = Math.round(totalSessionTime / 60);
-  const focusMinutes = Math.round(totalFocusTime / 60);
-  document.getElementById('focusRate').textContent = focusRate + '%';
-  document.getElementById('totalTime').textContent = totalMinutes + '分钟';
-  document.getElementById('focusTime').textContent = focusMinutes + '分钟';
+  const rate = totalSessionTime>0?Math.round(totalFocusTime/totalSessionTime*100):0;
+  document.getElementById('focusRate').textContent = rate + '%';
+  document.getElementById('totalTime').textContent = Math.round(totalSessionTime/60) + '分钟';
+  document.getElementById('focusTime').textContent = Math.round(totalFocusTime/60) + '分钟';
 }
 
-// ========== 导出/清除 ==========
+// ====== 数据导出/清除 ======
 function exportData() {
-  const dataStr = JSON.stringify(focusData, null, 2);
-  const dataBlob = new Blob([dataStr], {type: 'application/json'});
-  const url = URL.createObjectURL(dataBlob);
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = 'focus-data-' + new Date().toISOString().split('T')[0] + '.json';
-  link.click();
+  const blob = new Blob([JSON.stringify(focusData,0,2)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `focus-data-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
   URL.revokeObjectURL(url);
 }
 function clearData() {
-  if (confirm('确定要清除所有专注数据吗？')) {
-    focusData = [];
-    totalFocusTime = 0;
-    totalSessionTime = 0;
-    sessionStartTime = Date.now();
-    updateStats();
-    updateChart();
-    saveFocusData();
-  }
+  if (!confirm('确定要清除所有专注数据吗？')) return;
+  focusData = []; totalFocusTime = 0; totalSessionTime = 0; sessionStartTime = Date.now();
+  updateStats(); updateChart(); saveFocusData();
 }
 
-// ========== 专注数据点采集 ==========
+// ====== 添加数据点 ======
 function addFocusDataPoint(isFocused) {
   const now = Date.now();
-  const sessionDuration = (now - sessionStartTime) / 1000;
-  const focusRate = isFocused ? 100 : 0;
-  focusData.push({
-    timestamp: now,
-    focusRate: focusRate,
-    sessionDuration: sessionDuration
-  });
-  const oneDayAgo = now - (24 * 60 * 60 * 1000);
-  focusData = focusData.filter(point => point.timestamp >= oneDayAgo);
-  if (isFocused) {
-    totalFocusTime += 1;
-  }
-  totalSessionTime += 1;
-  updateStats();
-  updateChart();
-  saveFocusData();
+  focusData.push({ timestamp: now, focusRate: isFocused?100:0 });
+  // 保留一天内
+  const oneDayAgo = now - 24*3600*1000;
+  focusData = focusData.filter(p=>p.timestamp>=oneDayAgo);
+  totalSessionTime++;
+  if (isFocused) totalFocusTime++;
+  updateStats(); updateChart(); saveFocusData();
 }
 
-// ========== 摄像头与检测 ==========
-async function setup() {
-  updateStatus('⌛ 模型加载中…', 'loading');
+// ====== 摄像头 & 人脸识别 ======
+async function setupFace() {
+  document.getElementById('status').textContent = '⌛ 模型加载中…';
   await faceapi.nets.tinyFaceDetector.loadFromUri('weights');
   await faceapi.nets.faceLandmark68TinyNet.loadFromUri('weights');
-  updateStatus('✅ 模型加载完成，正在启动摄像头…', 'ready');
-  await startVideo();
-  updateStatus('📹 摄像头已启动', 'ready');
-}
-async function startVideo() {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: {} });
-    video.srcObject = stream;
-  } catch (err) {
-    console.error(err);
-    if (err.name === 'NotAllowedError') {
-      updateStatus('❌ 摄像头权限被拒绝，请在浏览器地址栏或系统设置中允许访问摄像头', 'error');
-    } else {
-      updateStatus(`❌ 无法启动摄像头：${err.message}`, 'error');
-    }
-  }
-}
-function updateStatus(message, className) {
-  statusDiv.textContent = message;
-  statusDiv.className = `status ${className}`;
-}
-function showAlert(message) {
-  const now = Date.now();
-  if (now - lastAlertTime > ALERT_COOLDOWN) {
-    alert(message);
-    lastAlertTime = now;
-  }
+  document.getElementById('status').textContent = '📹 摄像头启动中…';
+  const stream = await navigator.mediaDevices.getUserMedia({video:true});
+  document.getElementById('video').srcObject = stream;
+  document.getElementById('status').textContent = '✅ 运行中';
+  runDetectionLoop();
 }
 
-// ========== 主流程 ==========
-video.addEventListener('play', () => {
-  const centerX = overlay.width / 2;
-  const centerY = overlay.height / 2;
-  const options = new faceapi.TinyFaceDetectorOptions({
-    inputSize: 416,
-    scoreThreshold: 0.3
-  });
-  function drawCenterLines() {
-    ctx.strokeStyle = 'rgba(0, 255, 0, 0.5)';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([5, 5]);
-    ctx.beginPath();
-    ctx.moveTo(centerX, 0);
-    ctx.lineTo(centerX, overlay.height);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(0, centerY);
-    ctx.lineTo(overlay.width, centerY);
-    ctx.stroke();
+function runDetectionLoop() {
+  const video = document.getElementById('video');
+  const overlay = document.getElementById('overlay');
+  const ctx = overlay.getContext('2d');
+  const centerX = overlay.width/2, centerY = overlay.height/2;
+  const options = new faceapi.TinyFaceDetectorOptions({ inputSize:416, scoreThreshold:0.1 });
+
+  setInterval(async ()=>{
+    const det = await faceapi.detectSingleFace(video, options).withFaceLandmarks(true);
+    ctx.clearRect(0,0,overlay.width, overlay.height);
+    // 画中线
+    ctx.setLineDash([5,5]);
+    ctx.strokeStyle='rgba(0,255,0,0.5)';
+    ctx.beginPath(); ctx.moveTo(centerX,0); ctx.lineTo(centerX,overlay.height); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,centerY); ctx.lineTo(overlay.width,centerY); ctx.stroke();
     ctx.setLineDash([]);
-  }
-  setInterval(async () => {
-    const detection = await faceapi
-      .detectSingleFace(video, options)
-      .withFaceLandmarks(true);
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
-    drawCenterLines();
-    if (detection) {
-      const nose = detection.landmarks.getNose()[0];
-      const leftEye = detection.landmarks.getLeftEye()[0];
-      const rightEye = detection.landmarks.getRightEye()[0];
-      ctx.strokeStyle = 'green';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(detection.detection.box.x, detection.detection.box.y, 
-                    detection.detection.box.width, detection.detection.box.height);
-      ctx.fillStyle = 'yellow';
-      ctx.beginPath();
-      ctx.arc(nose.x, nose.y, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = 'blue';
-      ctx.beginPath();
-      ctx.arc(leftEye.x, leftEye.y, 3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(rightEye.x, rightEye.y, 3, 0, Math.PI * 2);
-      ctx.fill();
+
+    // 更新人脸检测状态
+    const isFaceDetected = !!det;
+    updateFaceDetectionStatus(isFaceDetected);
+    
+    // 更新专注网页状态
+    checkFocusSiteStatus(function(isFocus) {
+      // 只有人脸检测到且在专注网页，才算专注
+      const isFocused = isFaceDetected && isFocus;
+      addFocusDataPoint(isFocused);
+
+      // 5分钟未检测到人脸提醒逻辑也放到这里
+      if (!isFocused && Date.now()-lastFaceTime > ABSENCE_ALERT && !absenceAlerted) {
+        alert('超过5分钟未检测到人脸，请回到屏幕前！');
+        absenceAlerted = true;
+      }
+    });
+
+    if (det) {
+      const box = det.detection.box;
+      ctx.strokeStyle='green'; ctx.lineWidth=2;
+      ctx.strokeRect(box.x,box.y,box.width,box.height);
       lastFaceTime = Date.now();
       absenceAlerted = false;
       hasDetectedFace = true;
     }
-    // 只有在专注网址且5秒内检测到人脸才算专注
-    let isCurrentlyFocused;
-    if (!hasDetectedFace) {
-      isCurrentlyFocused = true; // 首次检测到人脸前，强制为100
-    } else {
-      isCurrentlyFocused = (Date.now() - lastFaceTime <= ABSENCE_THRESHOLD); // && isOnFocusSite();
-    }
-    addFocusDataPoint(isCurrentlyFocused);
-    if (isCurrentlyFocused) {
-      updateStatus('🟢 正对屏幕', 'focused');
-    } else {
-      updateStatus('⚠️ 未检测到人脸', 'no-face');
-    }
-    if (!absenceAlerted && Date.now() - lastFaceTime > ABSENCE_ALERT) {
-      alert('超过5分钟未检测到人脸，请回到屏幕前！');
-      absenceAlerted = true;
-    }
-  }, 1000);
-});
 
-// ========== 初始化 ==========
-loadFocusData();
-// 如果focusData为空，补充一段100的点，保证初始曲线为100
-if (focusData.length === 0) {
-  const now = Date.now();
-  for (let i = 0; i < 10; i++) {
-    focusData.push({
-      timestamp: now - (10 - i) * 1000,
-      focusRate: 100,
-      sessionDuration: i + 1
-    });
-  }
-  saveFocusData();
+    // const isFocused = hasDetectedFace
+    //   ? (Date.now()-lastFaceTime <= ABSENCE_THRESHOLD) && isOnFocusSite()
+    //   : true;
+
+    // addFocusDataPoint(isFocused);
+
+    // if (!isFocused && Date.now()-lastFaceTime > ABSENCE_ALERT && !absenceAlerted) {
+    //   alert('超过5分钟未检测到人脸，请回到屏幕前！');
+    //   absenceAlerted = true;
+    // }
+  }, 1000);
 }
-initChart();
-updateChart();
-updateStats();
-setup(); 
+
+// ====== 初始化 ======
+document.addEventListener('DOMContentLoaded', ()=>{
+  // 绑定 UI
+  document.getElementById('saveSitesBtn').addEventListener('click', saveFocusSites);
+  document.getElementById('exportBtn').addEventListener('click', exportData);
+  document.getElementById('clearBtn').addEventListener('click', clearData);
+  document.getElementById('timeRange').addEventListener('change', updateChart);
+
+  document.getElementById('focusSitesInput').value = localStorage.getItem('focusSites') || '';
+
+  // 更新专注网址显示
+  updateFocusSitesDisplay();
+
+  // 加载数据 & 初始图表
+  loadFocusData();
+  if (!focusData.length) {
+    // 首次给一些默认点
+    const now = Date.now();
+    for (let i=10; i>=1; i--) {
+      focusData.push({ timestamp: now - i*1000, focusRate:100 });
+      totalSessionTime++; totalFocusTime++;
+    }
+    saveFocusData();
+  }
+
+  initChart();
+  updateChart();
+  updateStats();
+  
+  // 初始化状态显示
+  const statusElement = document.getElementById('faceDetectionStatus');
+  statusElement.textContent = '⏳ 检测中...';
+  statusElement.className = 'status-value detecting';
+  checkFocusSiteStatus();
+  
+  setupFace();
+});
